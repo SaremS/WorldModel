@@ -6,33 +6,23 @@ using Revise
 
 
 struct VariationalAutoencoder
-
     encoder::Flux.Chain
     decoder::Flux.Chain
-    likelihood::Distributions.Distribution
-
-    encode::Function
-    decode::Function
-
+    distribution
 end
 
-function VariationalAutoencoder(encoder::Flux.Chain, decoder::Flux.Chain,
-                                likelihood::Distributions.Distribution)
-
-    encode(x) = encoder(x)
-    decode(x) = decoder(x)
-
-    return VariationalAutoencoder(encoder, decoder, likelihood, encode, decode)
+function VariationalAutoencoder(encoder::Flux.Chain, decoder::Flux.Chain)
+    return VariationalAutoencoder(encoder, decoder, Bernoulli)
 end
 
 struct VariationalEncoderLayer
     Wμ
     bμ
-
     Wσ
     bσ
 
     activation
+    distribution
 end
 Flux.@treelike VariationalEncoderLayer
 
@@ -75,12 +65,40 @@ end
 
 
 
+function vae_encode(vae::VariationalAutoencoder, x)
+    return vae.encoder(x)
+end
+
+function vae_decode(vae::VariationalAutoencoder, x)
+    return vae.decoder(x)
+end
+
+function (m::VariationalAutoencoder)(x)
+    encoding(x) = vae_encode(m, x)
+    decoding(x) = vae_decode(m, x)
+
+    encoded = [encoding([x[i]]) for i in 1:size(x)[1]]
+    return Tracker.collect(decoding.(encoded))
+end
+
+
 
 
 function calcStandardNormalKLD(μ, σ)
     return -2*log(σ) + σ^2 + μ^2 - 1
 end
 
-function calcLikelihood(dist::Distribution, x)
+function calcStandardNormalKLD(parameters)
+    μ = parameters[1]
+    σ = parameters[2]
+    return calcStandardNormalKLD(μ, σ)
+end
+
+function calcLogLikelihood(dist::Distribution, x)
     return logpdf(dist, x)
+end
+
+
+function vae_logpdf(vae::VariationalAutoencoder, x)
+    
 end
