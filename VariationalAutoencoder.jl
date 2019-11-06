@@ -10,6 +10,7 @@ struct VariationalAutoencoder
     decoder::Flux.Chain
     distribution
 end
+@Flux.treelike VariationalAutoencoder
 
 function VariationalAutoencoder(encoder::Flux.Chain, decoder::Flux.Chain)
     return VariationalAutoencoder(encoder, decoder, Bernoulli)
@@ -17,21 +18,19 @@ end
 
 struct VariationalEncoderLayer
     Wμ
-    bμ
     Wσ
-    bσ
 
     activation
 end
 Flux.@treelike VariationalEncoderLayer
 
 function VariationalEncoderLayer(in::Integer, out::Integer, activation::Function)
-    VariationalEncoderLayer(Flux.param(randn(out,in)), Flux.param(randn(out)),
-                     Flux.param(randn(out,in)), Flux.param(randn(out)),
+    VariationalEncoderLayer(Flux.param(randn(out,in)),
+                     Flux.param(randn(out,in)),
                      activation)
 end
 
-(m::VariationalEncoderLayer)(x) = [m.Wμ * x .+ m.bμ, m.activation.(m.Wσ * x .+ m.bσ)]
+(m::VariationalEncoderLayer)(x) = [m.Wμ * x, m.activation.(m.Wσ * x)]
 
 
 
@@ -84,7 +83,7 @@ end
 
 
 function calcStandardNormalKLD(μ, σ)
-    return -2*log(σ) + σ^2 + μ^2 - 1
+    return sum(- log.(σ .^2) .+ σ.^2 .+ μ.^2 .- 1)
 end
 
 function calcStandardNormalKLD(parameters)
@@ -98,23 +97,55 @@ function calcLogLikelihood(dist::Distribution, x)
 end
 
 
-function vae_logpdf(vae::VariationalAutoencoder, x)
+function calcVaeLogpdf(vae::VariationalAutoencoder, x)
 
     dist = vae.distribution
 
-    sample = vae.(x)
+    sample = [vae(x[i])[1][1] for i in 1:size(x)[1]]
     println(sample)
+    println(dist.(sample))
 
-    return -sum(logpdf.(dist.(sample), x))
+    return -mean(logpdf.(dist.(sample), x))
 
 end
 
 
+function calcVariationalLoss(vae::VariationalAutoencoder, x, n_samples = 100)
 
-encoder = Chain(Dense(1, 10), VariationalEncoderLayer(10,10, x->exp(x)))
-decoder = Chain(VariationalDecoderLayer(10,10,relu), Dense(10,1, σ))
+    inner_sample = (vae.encoder.(x))
+
+    kld = mean(calcStandardNormalKLD.(inner_sample))
+
+
+
+    outer_sample = [vae.decoder(inner_sample[i])[1][1] for i in 1:size(x)[1]]
+    dist = vae.distribution
+    loglike = Tracker.collect(-mean(logpdf.(dist.(outer_sample), x)))[1]
+
+    return loglike + kld
+end
+
+
+encoder = Chain(Dense(1, 20), VariationalEncoderLayer(20,1, x->relu(x)+1e-6))
+decoder = Chain(VariationalDecoderLayer(1,20,relu), Dense(20,1, σ))
 
 test = VariationalAutoencoder(encoder, decoder)
 
 
-vae_logpdf(test, [[1.], [2.]])
+calcVariationalLoss(test, [[1.], [0.]])
+
+paramets = Flux.params(test)
+
+opt = ADAM()
+#Flux.train!(loss, paramets, zip([[1.], [0.]]), opt)
+for i in 1:1000
+    loss(x) = calcVariationalLoss(test, x)
+    print(loss([[1.],[0.]]))
+    gradients = Tracker.gradient(()->loss([[1.], [0.]]), paramets)
+
+
+    for p in paramets
+        Tracker.update!(opt, p, gradients[p])
+    end
+end
+mean([test([1.]).data[1][1] for i in 1:100000])
