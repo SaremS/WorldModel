@@ -22,7 +22,6 @@ struct VariationalEncoderLayer
     bσ
 
     activation
-    distribution
 end
 Flux.@treelike VariationalEncoderLayer
 
@@ -100,5 +99,22 @@ end
 
 
 function vae_logpdf(vae::VariationalAutoencoder, x)
-    
+
+    dist = vae.distribution
+
+    sample = vae.(x)
+    println(sample)
+
+    return -sum(logpdf.(dist.(sample), x))
+
 end
+
+
+
+encoder = Chain(Dense(1, 10), VariationalEncoderLayer(10,10, x->exp(x)))
+decoder = Chain(VariationalDecoderLayer(10,10,relu), Dense(10,1, σ))
+
+test = VariationalAutoencoder(encoder, decoder)
+
+
+vae_logpdf(test, [[1.], [2.]])
